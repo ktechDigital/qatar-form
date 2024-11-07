@@ -1,0 +1,686 @@
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>Formulário de Atendimento</title>
+    <meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
+    <link
+      rel="stylesheet"
+      href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css"
+      integrity="sha384-T3c6CoIi6uLrA9TneNEoa7RxnatzjcDSCmG1MXxSR1GAsXEV/Dwwykc2MPK8M2HN"
+      crossorigin="anonymous"
+    />
+    <script
+      src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"
+      integrity="sha384-C6RzsynM9kWDrMNeT87bh95OGNyZPhcTNXj1NW7RuBCsyN/o0jlpcV8Qyq46cDfL"
+      crossorigin="anonymous"
+    ></script>
+    <script
+      src="https://code.jquery.com/jquery-3.7.1.min.js"
+      integrity="sha256-/JqT3SQfawRcv/BIHPThkBvs0OEvtFFmqPF/lYI/Cxo="
+      crossorigin="anonymous"
+    ></script>
+    <style>
+      .campo-obrigatorio {
+        border: 2px solid red; /* Cor da borda vermelha para destacar */
+      }
+    </style>
+    <script>
+      //Variaveis globaas
+      const CLIENT_ID = "4c5bbfcd-dc6b-4111-9f21-c2e5815bdf93";
+      const ENVIRONMENT = "sae1.pure.cloud";
+      const surveyFlow = "51d616b2-b779-44da-8384-181e74cda989";
+      let token;
+      let conversationId;
+      let participantId;
+      let agentId;
+      let customerAni;
+      let emailConversationId;
+      let data;
+
+      //Coleta o token Oauth que vem na URL retornada pelo serviço de autenticação. Por estar na URL e não no corpo da página é interessante carregar
+      //logo no inicio do script
+      if (window.location.hash) {
+        token = getParameterByName("access_token");
+        location.hash = "";
+      } else {
+        let queryStringData = {
+          response_type: "token",
+          client_id: CLIENT_ID,
+          redirect_uri: window.location.href,
+        };
+        window.location.replace(
+          `https://login.${ENVIRONMENT}/oauth/authorize?` +
+            jQuery.param(queryStringData)
+        );
+      }
+
+      function getFormData() {
+        data = {
+          Empresa: $("#inputEmpresa").val(),
+          Protocolo: $("#inputProtocolo").val(),
+          Telefone: $("#inputTelefone").val(),
+          NomeCliente: $("#inputNomeCliente").val(),
+          EmailCliente: $("#inputEmailCliente").val(),
+          Identificador: $("#inputIdentificador").val(),
+          NumeroReserva: $("#inputNumeroReserva").val(),
+          NumeroBilhete: $("#inputNumeroBilhete").val(),
+          NumeroReclamacao: $("#inputNumeroReclamacao").val(),
+          Classificacao: $("#inputClassificacao").val(),
+          MotivoContato: $("#inputMotivoContato").val(),
+          Observacoes: $("#inputObservacoes").val(),
+        };
+      }
+
+      function getParameterByName(name) {
+        name = name.replace(/[\\[]/, "\\[").replace(/[\]]/, "\\]");
+        let regex = new RegExp("[\\#&]" + name + "=([^&#]*)"),
+          results = regex.exec(location.hash);
+        return results === null
+          ? ""
+          : decodeURIComponent(results[1].replace(/\+/g, " "));
+      }
+
+      function generateProtocol() {
+        let now = new Date();
+        return now.toISOString().replace(/[\-T:\.Z]/g, "");
+      }
+
+      function formatDataForEmail(obj) {
+        return Object.entries(obj)
+          .map(([key, value]) => `${key}: ${value}`)
+          .join(",\n");
+      }
+
+      async function getCurrentCallData() {
+        try {
+          const response = await $.ajax({
+            url: "https://api.sae1.pure.cloud/api/v2/conversations?communicationType=Call",
+            type: "GET",
+            headers: {
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+            },
+          });
+
+          // Processamento da resposta igual ao seu exemplo original
+          conversationId = response.entities.map((entity) => entity.id);
+          agentId = response.entities
+            .map((entity) =>
+              entity.participants
+                .filter((participant) => participant.wrapupRequired === true)
+                .map((agent) => agent.id)
+            )
+            .flat();
+          participantId = response.entities
+            .map((entity) =>
+              entity.participants
+                .filter((participant) => participant.purpose === "customer")
+                .map((customer) => customer.id)
+            )
+            .flat();
+          customerAni = response.entities
+            .map((entity) =>
+              entity.participants
+                .filter((participant) => participant.purpose === "customer")
+                .map((customer) => customer.ani.replace("tel:", ""))
+            )
+            .flat();
+
+          // Atualização da interface do usuário aqui
+          $("#inputTelefone").val(customerAni);
+        } catch (error) {
+          console.error("Erro na requisição: ", error);
+        }
+      }
+
+      async function updateParticipantAttributes(data) {
+        try {
+          //atualiza atributos do participante
+          $.ajax({
+            url: `https://api.${ENVIRONMENT}/api/v2/conversations/${conversationId}/participants/${participantId}/attributes`,
+            type: "PATCH",
+            headers: {
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+            },
+            data: JSON.stringify({ attributes: data }),
+            success: function (response) {
+              console.log("Dados do participante enviados com sucesso!");
+              console.log(response);
+            },
+            error: function (xhr, status, error) {
+              alert("Erro ao enviar os Dados do participante.");
+              console.error("Erro: ", status, error);
+            },
+          });
+        } catch (error) {
+          console.error("Erro na requisição: ", error);
+        }
+      }
+
+      async function updateParticipantNotes() {
+        //Atualiza campo de observações/notas do particiapnte
+        try {
+          $.ajax({
+            url: `https://api.sae1.pure.cloud/api/v2/conversations/calls/${conversationId}/participants/${participantId}`,
+            type: "PATCH",
+            headers: {
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+            },
+            data: JSON.stringify({
+              wrapup: {
+                notes: $("#inputObservacoes").val(),
+                code: "FINALIZADO AGENTE",
+              },
+            }),
+            success: function (response) {
+              console.log("Notas da conversa adicionadas com sucesso!");
+              console.log(response);
+            },
+            error: function (xhr, status, error) {
+              console.error("Erro ao enviar as notas da conversa.");
+              console.error("Erro: ", status, error);
+            },
+          });
+        } catch (error) {
+          console.log(error);
+        }
+      }
+
+      async function transferToFlow() {
+        var payload = {
+          address: surveyFlow, // ID do Fluxo de pesquisa de satisfação
+        };
+
+        try {
+          $.ajax({
+            url: `https://api.sae1.pure.cloud/api/v2/conversations/calls/${conversationId}/participants/${agentId}/replace`,
+            type: "POST",
+            headers: {
+              Authorization: `Bearer ${token}`,
+              "Content-Type": "application/json",
+            },
+            data: JSON.stringify(payload),
+            success: function (response) {
+              console.log(
+                "Chamada transferida com sucesso para o fluxo de Net Score."
+              );
+            },
+            error: function (xhr, status, error) {
+              console.error(
+                "Erro ao transferir chamada para o fluxo de Net Score.",
+                status,
+                error
+              );
+            },
+          });
+        } catch (error) {
+          console.log(error);
+        }
+      }
+
+      async function sendEmail(data) {
+        try {
+          getFormData();
+          await createEmailConversation(data);
+          await sendEmailMessage(data);
+          await disconnectEmailConversation();
+
+          $("#botaoEnviaEmail").prop("disabled", true);
+        } catch (error) {
+          console.error("Erro no fluxo de e-mail:", error);
+        }
+
+        async function createEmailConversation(data) {
+          const response = await $.ajax({
+            url: `https://api.sae1.pure.cloud/api/v2/conversations/emails`,
+            type: "POST",
+            headers: {
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+            },
+            data: JSON.stringify({
+              queueId: "80dcb117-c534-4503-a77b-637e442e5b73",
+              provider: "PureCloud Email",
+              toAddress: "qatar_tabulacaokainos@kainos.com.br",
+              toName: "BackOffice Qatar Airways",
+              fromAddress: "qatarairways@atendimentokainos.sae1.pure.cloud",
+              fromName: "BackOffice Qatar Airways",
+              subject: `${$("#inputProtocolo").val()} - ${$(
+                "#inputProtocolo"
+              ).val()}`,
+              direction: "OUTBOUND",
+              textBody: formatDataForEmail(data),
+            }),
+          });
+          console.log("Conversa de e-mail criada com sucesso");
+          emailConversationId = response.id;
+          console.log(emailConversationId);
+        }
+
+        async function sendEmailMessage(data) {
+          var emailDetails = {
+            to: ["qatar_tabulacaokainos@kainos.com.br"],
+            fromEmail: "qatarairways@atendimentokainos.sae1.pure.cloud",
+            fromName: "Qatar Airways",
+            cc: [],
+            bcc: [],
+            textBody: formatDataForEmail(data),
+            subject: `${$("#inputProtocolo").val()} - ${$(
+              "#inputMotivoContato"
+            ).val()}`,
+          };
+
+          var caseEmailAdicional = [
+            "CANCELAMENTO E REEMBOLSO",
+            "REMARCAÇÃO DE PASSAGEM",
+          ];
+
+          if (caseEmailAdicional.includes($("#inputMotivoContato").val())) {
+            emailDetails.to.push("maescobar@br.qatarairways.com");
+          }
+
+          await $.ajax({
+            url: `https://api.sae1.pure.cloud/api/v2/conversations/emails/${emailConversationId}/messages`,
+            type: "POST",
+            headers: {
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+            },
+            data: JSON.stringify({
+              to: emailDetails.to.map((email) => ({ email: email })),
+              from: {
+                email: emailDetails.fromEmail,
+                name: emailDetails.fromName,
+              },
+              cc: emailDetails.cc,
+              bcc: emailDetails.bcc,
+              textBody: emailDetails.textBody,
+              state: "Ready",
+              emailSizeBytes: 142,
+              maxEmailSizeBytes: 41943040,
+              attachments: [],
+              historyIncluded: true,
+              subject: emailDetails.subject,
+            }),
+            success: function (response) {
+              console.log("Mensagem de e-mail enviada com sucesso.");
+            },
+            error: function (xhr, status, error) {
+              console.error(
+                "Erro ao enviar a mensagem de e-mail: ",
+                status,
+                error
+              );
+            },
+          });
+        }
+
+        async function disconnectEmailConversation() {
+          const response = await $.ajax({
+            url: `https://api.sae1.pure.cloud/api/v2/conversations/${emailConversationId}/disconnect`,
+            type: "POST",
+            headers: {
+              Authorization: "Bearer " + token,
+              "Content-Type": "application/json",
+            },
+          });
+          console.log("Conversa de email desconectada com sucesso.");
+        }
+      }
+
+      $(document).ready(async function () {
+        $('[data-toggle="tooltip"]').tooltip();
+
+        if (token) {
+          await getCurrentCallData();
+        }
+
+        $("#formAtendimento").submit(async function (event) {
+          getFormData();
+          event.preventDefault(); // Impede o envio padrão do formulário
+          await updateParticipantAttributes(data);
+          await updateParticipantNotes();
+          await sendEmail(data);
+        });
+
+        $("#generateProtocol").click(async function () {
+          let protocol = generateProtocol();
+          await getCurrentCallData();
+          $("#inputProtocolo").val(protocol);
+          $("#generateProtocol").prop("disabled", true);
+          $("#botaoEnviaPesquisa").prop("disabled", false);
+        });
+
+        $("#botaoEnviaPesquisa").click(async function (event) {
+          getFormData();
+
+          if (token && conversationId && participantId) {
+            await transferToFlow();
+          } else {
+            alert("Dados necessários para o envio não estão disponíveis.");
+          }
+
+          $("#botaoEnviaPesquisa").prop("disabled", true);
+          $("#botaoEnviaEmail").prop("disabled", false);
+        });
+
+        $(function () {
+          $('[data-toggle="tooltip"]').tooltip();
+        });
+      });
+    </script>
+  </head>
+
+  <body class="bg-light">
+    <div class="container py-5">
+      <h2
+        style="
+          background-color: #f8e6e6;
+          padding: 10px;
+          border-radius: 5px;
+          color: #500000;
+        "
+      >
+        Atendimento Qatar Airways
+      </h2>
+      <br />
+      <br />
+      <form id="formAtendimento">
+        <!-- Row 1 -->
+        <div class="row g-3">
+          <div class="col-md-3">
+            <label for="inputEmpresa" class="form-label">Empresa</label>
+            <input
+              type="text"
+              class="form-control campo-obrigatorio"
+              id="inputEmpresa"
+              value="Qatar Airways"
+              readonly="true"
+              required
+            />
+          </div>
+          <div class="col-md-3">
+            <label for="inputProtocolo" class="form-label">Protocolo</label>
+            <input
+              type="text"
+              class="form-control campo-obrigatorio"
+              id="inputProtocolo"
+              required
+              disabled
+            />
+          </div>
+          <div class="col-md-3">
+            <label for="inputTelefone" class="form-label">Telefone</label>
+            <input
+              type="tel"
+              class="form-control campo-obrigatorio"
+              id="inputTelefone"
+              required
+            />
+          </div>
+        </div>
+
+        <!-- Row 2 -->
+        <div class="row g-3 mt-3">
+          <div class="col-md-4">
+            <label for="inputNomeCliente" class="form-label"
+              >Nome Cliente</label
+            >
+            <input
+              type="text"
+              class="form-control campo-obrigatorio"
+              id="inputNomeCliente"
+              required
+            />
+          </div>
+          <div class="col-md-4">
+            <label for="inputEmailCliente" class="form-label"
+              >E-mail Cliente</label
+            >
+            <input
+              type="text"
+              class="form-control campo-obrigatorio"
+              id="inputEmailCliente"
+              required
+            />
+          </div>
+        </div>
+
+        <!-- Row 3 -->
+        <div class="row g-3 mt-3">
+          <div class="col-md-3">
+            <label for="inputIdentificador" class="form-label"
+              >Identificador</label
+            >
+            <input type="text" class="form-control" id="inputIdentificador" />
+          </div>
+          <div class="col-md-3">
+            <label for="inputNumeroBilhete" class="form-label"
+              >Número do Bilhete</label
+            >
+            <input type="text" class="form-control" id="inputNumeroBilhete" />
+          </div>
+          <div class="col-md-3">
+            <label for="inputNumeroReserva" class="form-label"
+              >Número da Reserva</label
+            >
+            <input type="text" class="form-control" id="inputNumeroReserva" />
+          </div>
+          <div class="col-md-3">
+            <label for="inputNumeroReclamacao" class="form-label"
+              >Número da Reclamação</label
+            >
+            <input
+              type="text"
+              class="form-control"
+              id="inputNumeroReclamacao"
+            />
+          </div>
+        </div>
+
+        <!-- Row 4 -->
+        <div class="row g-3 mt-3">
+          <div class="col-md-6">
+            <label for="inputClassificacao" class="form-label"
+              >Classificação</label
+            >
+            <select
+              class="form-select campo-obrigatorio"
+              id="inputClassificacao"
+            >
+              <option value="" selected disabled hidden>Escolher...</option>
+              <option value="Improdutivo">Improdutivo</option>
+              <option value="Atendimento">Atendimento</option>
+              <!-- Add options here -->
+            </select>
+          </div>
+          <div class="col-md-6">
+            <label for="inputMotivoContato" class="form-label"
+              >Motivo Contato</label
+            >
+            <select
+              class="form-select campo-obrigatorio"
+              id="inputMotivoContato"
+              required
+            >
+              <option value="" selected disabled hidden>Escolher...</option>
+              <option value="Engano">Engano</option>
+              <option value="Instabilidade sistêmica">
+                Instabilidade sistêmica
+              </option>
+              <option value="Queda de Ligação">Queda de Ligação</option>
+              <option value="Teste Telefonia">Teste Telefonia</option>
+              <option value="AERONAVE">AERONAVE</option>
+              <option value="ALTERAÇÃO DE NOME DO PAX OU NOME ERRADO">
+                ALTERAÇÃO DE NOME DO PAX OU NOME ERRADO
+              </option>
+              <option value="ALUGUEL DE CARRO">ALUGUEL DE CARRO</option>
+              <option value="ASSENTOS ESPECIAIS">ASSENTOS ESPECIAIS</option>
+              <option value="ATRASO DE VOO">ATRASO DE VOO</option>
+              <option value="BAGAGEM - FRANQUIA">BAGAGEM - FRANQUIA</option>
+              <option value="BAGAGEM (EXTRAVIADA/AVARIADA/ITENS FALTANTES)">
+                BAGAGEM (EXTRAVIADA/AVARIADA/ITENS FALTANTES)
+              </option>
+              <option value="BAGAGEM DESACOMPANHADA">
+                BAGAGEM DESACOMPANHADA
+              </option>
+              <option value="BEBÊ - BERCINHO/RESTRIÇÕES">
+                BEBÊ - BERCINHO/RESTRIÇÕES
+              </option>
+              <option value="CANCELAMENTO E REEMBOLSO">
+                CANCELAMENTO E REEMBOLSO
+              </option>
+              <option value="CANCELAMENTO E REEMBOLSO DE BILHETE/PASSAGEM">
+                CANCELAMENTO E REEMBOLSO DE BILHETE/PASSAGEM
+              </option>
+              <option value="CHECK-IN ONLINE">CHECK-IN ONLINE</option>
+              <option value="CITY TOUR EM DOHA">CITY TOUR EM DOHA</option>
+              <option value="COMPRA DE PASSAGEM">COMPRA DE PASSAGEM</option>
+              <option value="COMPRA EM DUPLICIDADE">
+                COMPRA EM DUPLICIDADE
+              </option>
+              <option value="CONFIRMAÇÃO DE COMPRA">
+                CONFIRMAÇÃO DE COMPRA
+              </option>
+              <option value="CONFIRMAÇÃO DE DADOS DE COMPRA ONLINE">
+                CONFIRMAÇÃO DE DADOS DE COMPRA ONLINE
+              </option>
+              <option value="CONFIRMAÇÃO DE PASSAGEIRO A BORDO">
+                CONFIRMAÇÃO DE PASSAGEIRO A BORDO
+              </option>
+              <option value="CONTESTAÇÃO DE COMPRA">
+                CONTESTAÇÃO DE COMPRA
+              </option>
+              <option value="CRÉDITO E USO DE MILHAS OUTRAS CIAS AÉREAS">
+                CRÉDITO E USO DE MILHAS OUTRAS CIAS AÉREAS
+              </option>
+              <option value="CRÉDITO E USO DE MILHAS PRIVILEGE CLUB/QATAR">
+                CRÉDITO E USO DE MILHAS PRIVILEGE CLUB/QATAR
+              </option>
+              <option value="DECLARAÇÃO DE EMBARQUE/SEGUNDA VIA DE CARTÃO">
+                DECLARAÇÃO DE EMBARQUE/SEGUNDA VIA DE CARTÃO
+              </option>
+              <option value="DOCUMENTAÇÃO NECESSÁRIA PARA EMBARQUE">
+                DOCUMENTAÇÃO NECESSÁRIA PARA EMBARQUE
+              </option>
+              <option value="HORÁRIO CHECK-IN">HORÁRIO CHECK-IN</option>
+              <option value="IDOSO">IDOSO</option>
+              <option value="INFORMAÇÃO">INFORMAÇÃO</option>
+              <option value="INFORMAÇÕES DE CANCELAMENTO DE VÔO">
+                INFORMAÇÕES DE CANCELAMENTO DE VÔO
+              </option>
+              <option value="INFORMAÇÕES GERAIS SOBRE O VOO">
+                INFORMAÇÕES GERAIS SOBRE O VOO
+              </option>
+              <option value="MARCAÇÃO DE ASSENTOS">MARCAÇÃO DE ASSENTOS</option>
+              <option value="MEDICAMENTOS - TRANSPORTE E ARMAZENAMENTO">
+                MEDICAMENTOS - TRANSPORTE E ARMAZENAMENTO
+              </option>
+              <option value="MENOR DESACOMPANHADO">MENOR DESACOMPANHADO</option>
+              <option value="OBJETOS ESQUECIDOS DENTRO E /OU FORA DA AERON">
+                OBJETOS ESQUECIDOS DENTRO E /OU FORA DA AERON
+              </option>
+              <option value="PORTÃO PARA EMBARQUE E/OU DESEMBARQUE">
+                PORTÃO PARA EMBARQUE E/OU DESEMBARQUE
+              </option>
+              <option value="PROGRAMA DE MILHAGEM">PROGRAMA DE MILHAGEM</option>
+              <option value="RECLAMAÇÃO">RECLAMAÇÃO</option>
+              <option value="REEMBOLSO DE VALOR GARANTIA">
+                REEMBOLSO DE VALOR GARANTIA
+              </option>
+              <option value="REFEIÇÕES - PEDIDOS ESPECIAIS">
+                REFEIÇÕES - PEDIDOS ESPECIAIS
+              </option>
+              <option value="REGRAS TARIFÁRIAS COMPRA QATAR">
+                REGRAS TARIFÁRIAS COMPRA QATAR
+              </option>
+              <option value="REMARCAÇÃO DE PASSAGEM">
+                REMARCAÇÃO DE PASSAGEM
+              </option>
+              <option value="RESERVAS DE HOTEL">RESERVAS DE HOTEL</option>
+              <option value="RESERVAS PASSAGEM">RESERVAS PASSAGEM</option>
+              <option value="TEMPO DE CONEXÃO/ESCALA">
+                TEMPO DE CONEXÃO/ESCALA
+              </option>
+              <option value="TRANSLADO">TRANSLADO</option>
+              <option value="TRANSPORTE DE BAGAGEM">
+                TRANSPORTE DE BAGAGEM
+              </option>
+              <option value="TRANSPORTE DE ANIMAIS">
+                TRANSPORTE DE ANIMAIS
+              </option>
+              <option value="TRANSPORTE DE CARGAS">TRANSPORTE DE CARGAS</option>
+              <option value="UPGRADE">UPGRADE</option>
+              <option value="VACINAS">VACINAS</option>
+              <option value="VISTO PARA O CATAR">VISTO PARA O CATAR</option>
+              <option value="VISTO PARA OS EMIRADOS ÁRABES UNIDOS/DUBAI">
+                VISTO PARA OS EMIRADOS ÁRABES UNIDOS/DUBAI
+              </option>
+              <option value="VISTO STPC">VISTO STPC</option>
+              <option value="VISTOS PARA OUTRAS LOCALIDADES">
+                VISTOS PARA OUTRAS LOCALIDADES
+              </option>
+              <!-- Add options here -->
+            </select>
+          </div>
+        </div>
+
+        <!-- Observações -->
+        <div class="row g-3 mt-3">
+          <div class="col">
+            <label for="inputObservacoes" class="form-label">Observações</label>
+            <textarea
+              class="form-control"
+              id="inputObservacoes"
+              rows="3"
+              required
+            ></textarea>
+          </div>
+        </div>
+
+        <!-- Buttons and Interaction Info -->
+        <div class="row g-3 mt-3">
+          <div class="col d-flex justify-content-start">
+            <button
+              type="button"
+              class="btn btn-primary"
+              id="generateProtocol"
+              style="margin-right: 10px"
+              data-toggle="tooltip"
+              data-placement="top"
+              title="Clique para gerar o protocolo de atendimento."
+            >
+              Gerar Protocolo
+            </button>
+            <button
+              type="button"
+              class="btn btn-success"
+              id="botaoEnviaPesquisa"
+              style="margin-right: 10px"
+              data-toggle="tooltip"
+              data-placement="top"
+              title="Clique para enviar o cliente para a esquisa de satisfação. A chamada será encerrada."
+              disabled
+            >
+              Pesquisa Satisfação
+            </button>
+            <button
+              type="submit"
+              class="btn btn-warning"
+              id="botaoEnviaEmail"
+              style="margin-right: 10px"
+              data-toggle="tooltip"
+              data-placement="top"
+              title="Clique para finalizar o atendimento e enviar as informações para o BackOffice. O envio só pode ser feito uma vez. Certifique-se de que o atendimento foi devidamente preenchido. "
+              disabled
+            >
+              Finalizar Atendimento
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  </body>
+</html>
